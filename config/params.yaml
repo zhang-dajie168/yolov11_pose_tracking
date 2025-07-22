@@ -1,0 +1,8 @@
+yolov11_pose_node:
+  ros__parameters:
+    model_path: "/home/peng/Ebike_Human_Follower/src/yolov11_pose_tracking/models/yolo11n-pose.pt"
+    conf_threshold: 0.25
+    kpt_conf_threshold: 0.25
+    tracking_threshold: 0.5
+    track_buffer: 30
+    match_threshold: 0.9
