@@ -1,8 +1,39 @@
 yolov11_pose_node:
   ros__parameters:
-    model_path: "/home/peng/Ebike_Human_Follower/src/yolov11_pose_tracking/models/yolo11n-pose.pt"
-    conf_threshold: 0.25
-    kpt_conf_threshold: 0.25
+    # YOLO模型参数
+    model_path: "/home/sunrise/Ebike_Human_Follower/src/yolov11_pose_tracking/models/yolov8n_pose_bayese_640x640_nv12_modified.bin"
+    conf_threshold: 0.7
+    kpt_conf_threshold: 0.5
+    
+    # 跟踪参数
     tracking_threshold: 0.5
     track_buffer: 30
-    match_threshold: 0.9
+    match_threshold: 0.8
+    
+    # 人体参数
+    real_person_height: 1.70
+    
+    # 处理性能参数
+    max_processing_fps: 15
+    
+    # 举手检测参数
+    hands_up_confirm_frames: 3
+    
+    # 跟踪保护参数
+    tracking_protection_time: 5.0
+    
+    # ReID相关参数
+    reid_similarity_threshold: 0.73
+    max_lost_frames_for_recovery: 5
+    feature_update_interval: 5.0
+    reid_model_path: "/home/sunrise/Ebike_Human_Follower/src/yolov11_pose_tracking/models/osnet_64x128_nv12.bin"
+    
+    # BOTSORT跟踪器参数
+    track_high_thresh: 0.25
+    track_low_thresh: 0.1
+    new_track_thresh: 0.25
+    fuse_score: true
+    gmc_method: "sparseOptFlow"
+    proximity_thresh: 0.5
+    appearance_thresh: 0.7
+    with_reid: false
