@@ -74,6 +74,7 @@ class BaseModel:
         # 加载BPU的bin模型
         try:
             self.quantize_model = dnn.load(model_file)
+            logger.info(f"Yolo模型加载成功: {model_file}")
         except Exception as e:
             logger.error("❌ Failed to load model file: %s"%(model_file))
             logger.error(e)
