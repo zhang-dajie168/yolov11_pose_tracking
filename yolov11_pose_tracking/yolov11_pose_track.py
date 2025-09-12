@@ -590,7 +590,7 @@ class Yolov11PoseNode(Node):
         if (has_valid_keypoint(self.KEYPOINT_NAMES['LEFT_WRIST']) and 
             has_valid_keypoint(self.KEYPOINT_NAMES['LEFT_ELBOW'])):
             left_wrist = keypoints[self.KEYPOINT_NAMES['LEFT_WRIST']]
-            left_elbow = keypoints[self.KEYPOINT_NAMES['LEFT_ELBOW']]
+            # left_elbow = keypoints[self.KEYPOINT_NAMES['LEFT_ELBOW']]
             left_hand_up = (left_wrist[1] < left_shoulder[1] and
                            left_wrist[1] < nose[1] and
                            abs(left_wrist[0] - left_shoulder[0]) < 80)
@@ -599,7 +599,7 @@ class Yolov11PoseNode(Node):
         if (has_valid_keypoint(self.KEYPOINT_NAMES['RIGHT_WRIST']) and 
             has_valid_keypoint(self.KEYPOINT_NAMES['RIGHT_ELBOW'])):
             right_wrist = keypoints[self.KEYPOINT_NAMES['RIGHT_WRIST']]
-            right_elbow = keypoints[self.KEYPOINT_NAMES['RIGHT_ELBOW']]
+            # right_elbow = keypoints[self.KEYPOINT_NAMES['RIGHT_ELBOW']]
             right_hand_up = (right_wrist[1] < right_shoulder[1] and
                             right_wrist[1] < nose[1] and
                             abs(right_wrist[0] - right_shoulder[0]) < 80)
@@ -683,24 +683,47 @@ class Yolov11PoseNode(Node):
         image[:] = display_image[:]
         
     def publish_tracked_keypoints(self, tracks: List[Dict], header):
-        """发布边界框的四个角点"""
+        """发布边界框的四个角点，包含目标状态信息"""
+        # 检查当前是否有跟踪目标
+        has_tracking_target = False
+        
         for track in tracks:
             track_id = track['track_id']
-            if track_id in self.tracked_persons and not self.tracked_persons[track_id]['is_tracking']:
-                continue
-            x1, y1, x2, y2 = track['bbox']
-            
+            if track_id in self.tracked_persons and self.tracked_persons[track_id]['is_tracking']:
+                has_tracking_target = True
+                x1, y1, x2, y2 = track['bbox']
+                
+                polygon_msg = PolygonStamped()
+                polygon_msg.header = header
+                polygon_msg.header.frame_id = "camera_link"
+                
+                # 添加目标状态信息到消息中
+                # 使用第一个点存储状态信息：x=track_id, y=1(正常), z=0(保留)
+                points = [
+                    Point32(x=float(track_id), y=1.0, z=0.0),  # 状态点：y=1表示目标正常
+                    Point32(x=float(x1), y=float(y1), z=0.0),   # 左上角
+                    Point32(x=float(x2), y=float(y2), z=0.0),   # 右下角
+                ]
+                
+                polygon_msg.polygon.points = points
+                self.keypoint_tracks_pub.publish(polygon_msg)
+        
+        # 如果当前应该有跟踪目标但目标丢失了
+        if self.current_tracking_id is not None and not has_tracking_target:
             polygon_msg = PolygonStamped()
             polygon_msg.header = header
             polygon_msg.header.frame_id = "camera_link"
             
+            # 发布目标丢失状态：y=0表示目标丢失
             points = [
-                Point32(x=float(x1), y=float(y1), z=0.0),
-                Point32(x=float(x2), y=float(y2), z=0.0),                 
+                Point32(x=float(self.current_tracking_id), y=0.0, z=0.0),  # 状态点：y=0表示目标丢失
+                Point32(x=0.0, y=0.0, z=0.0),  # 无效坐标
+                Point32(x=0.0, y=0.0, z=0.0),  # 无效坐标
             ]
             
             polygon_msg.polygon.points = points
             self.keypoint_tracks_pub.publish(polygon_msg)
+            self.get_logger().info(f"发布目标丢失状态: ID {self.current_tracking_id}")
 
 
 
