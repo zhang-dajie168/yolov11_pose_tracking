@@ -19,19 +19,6 @@ import copy
 from .YOLO_Pose import YOLO11_Pose
 from .BOTSort_rdk import BOTSORT, OSNetReID
 
-class DepthFilter:
-    def __init__(self, depth_window_size=5, depth_threshold=0.5):
-        self.depth_window_size = depth_window_size
-        self.depth_threshold = depth_threshold
-        self.depth_window = deque(maxlen=depth_window_size)
-
-    def add_depth(self, depth):
-        self.depth_window.append(depth)
-
-    def get_filtered_depth(self):
-        if len(self.depth_window) == 0:
-            return 0.0
-        return np.median(self.depth_window) if len(self.depth_window) > 1 else self.depth_window[-1]
 
 class TrackedTarget:
     """跟踪目标信息类"""
@@ -154,9 +141,9 @@ class Yolov11PoseNode(Node):
         
         # Tracking and depth related variables
         self.tracked_persons: Dict[int, Dict] = {}
-        self.depth_image = None
-        self.depth_lock = threading.Lock()
-        self.depth_filters: Dict[int, DepthFilter] = {}
+        # self.depth_image = None
+        # self.depth_lock = threading.Lock()
+        # self.depth_filters: Dict[int, DepthFilter] = {}
         
         # 举手检测相关变量
         self.hands_up_history: Dict[int, deque] = {}
@@ -349,61 +336,7 @@ class Yolov11PoseNode(Node):
         
         return None
 
-    def estimate_depth_from_bbox_height(self, bbox_height_pixels: float) -> float:
-        """基于边界框高度估计深度"""
-        return (self.real_person_height * self.fy) / bbox_height_pixels
-
-    def _get_keypoints_depth(self, keypoints: np.ndarray) -> float:
-        """从关键点获取深度"""
-        valid_kps_indices = [
-            self.KEYPOINT_NAMES['LEFT_SHOULDER'],
-            self.KEYPOINT_NAMES['RIGHT_SHOULDER'],
-            self.KEYPOINT_NAMES['LEFT_HIP'],
-            self.KEYPOINT_NAMES['RIGHT_HIP']
-        ]
-        
-        valid_depths = []
-        with self.depth_lock:
-            if self.depth_image is None:
-                return 0.0
-                
-            for idx in valid_kps_indices:
-                if idx >= len(keypoints) or np.isnan(keypoints[idx]).any() or (keypoints[idx][0] == 0 and keypoints[idx][1] == 0):
-                    continue
-                x, y = keypoints[idx].astype(int)
-                if 0 <= x < self.depth_image.shape[1] and 0 <= y < self.depth_image.shape[0]:
-                    depth = self.depth_image[y, x] / 1000.0
-                    if 0.5 < depth < 8.0:
-                        valid_depths.append(depth)
-        
-        return np.median(valid_depths) if valid_depths else 0.0
-
-    def compute_body_depth(self, bbox: List[float], keypoints: np.ndarray, track_id: int) -> float:
-        """融合关键点深度和边界框高度估计"""
-        keypoints_depth = self._get_keypoints_depth(keypoints)
-        
-        _, y1, _, y2 = bbox
-        bbox_height = y2 - y1
-        bbox_estimated_depth = self.estimate_depth_from_bbox_height(bbox_height)
-        
-        if keypoints_depth <= 0:
-            final_depth = bbox_estimated_depth
-        else:
-            final_depth = (keypoints_depth * 0.7 + bbox_estimated_depth * 0.3)
-        
-        if track_id not in self.depth_filters:
-            self.depth_filters[track_id] = DepthFilter()
-        
-        self.depth_filters[track_id].add_depth(final_depth)
-        return self.depth_filters[track_id].get_filtered_depth()
-
-    def depth_callback(self, msg):
-        with self.depth_lock:
-            try:
-                self.depth_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
-            except Exception as e:
-                self.get_logger().error(f"Depth image conversion error: {str(e)}")
-
+ 
     def image_callback(self, msg):
         current_time = time.time()
         if current_time - self.last_process_time < self.min_process_interval:
@@ -468,7 +401,7 @@ class Yolov11PoseNode(Node):
                         'first_seen_time': current_time,
                         'last_seen_time': current_time
                     }
-                    self.depth_filters[track_id] = DepthFilter()
+                    # self.depth_filters[track_id] = DepthFilter()
                     self.hands_up_history[track_id] = deque(maxlen=self.hands_up_confirm_frames)
                 else:
                     self.tracked_persons[track_id]['last_seen_time'] = current_time
@@ -550,8 +483,8 @@ class Yolov11PoseNode(Node):
                 last_seen = self.tracked_persons[track_id]['last_seen_time']
                 if current_time - last_seen > max_track_age:
                     del self.tracked_persons[track_id]
-                    if track_id in self.depth_filters:
-                        del self.depth_filters[track_id]
+                    # if track_id in self.depth_filters:
+                    #     del self.depth_filters[track_id]
                     if track_id in self.hands_up_history:
                         del self.hands_up_history[track_id]
                     if track_id in self.tracked_targets:
@@ -727,38 +660,38 @@ class Yolov11PoseNode(Node):
 
 
 
-    def publish_person_positions(self, tracks: List[Dict], header):
-        for track in tracks:
-            track_id = track['track_id']
-            if track_id in self.tracked_persons and not self.tracked_persons[track_id]['is_tracking']:
-                continue
+    # def publish_person_positions(self, tracks: List[Dict], header):
+    #     for track in tracks:
+    #         track_id = track['track_id']
+    #         if track_id in self.tracked_persons and not self.tracked_persons[track_id]['is_tracking']:
+    #             continue
                 
-            x1, y1, x2, y2 = track['bbox']
-            keypoints = track['keypoints']
+    #         x1, y1, x2, y2 = track['bbox']
+    #         keypoints = track['keypoints']
             
-            depth = self.compute_body_depth([x1, y1, x2, y2], keypoints, track_id)
+    #         depth = self.compute_body_depth([x1, y1, x2, y2], keypoints, track_id)
             
-            if depth <= 0:
-                continue
+    #         if depth <= 0:
+    #             continue
                 
-            # 计算中心点坐标
-            center_x = (x1 + x2) / 2
-            center_y = (y1 + y2) / 2
+    #         # 计算中心点坐标
+    #         center_x = (x1 + x2) / 2
+    #         center_y = (y1 + y2) / 2
             
-            # 转换为3D坐标
-            x = (center_x - self.cx) * depth / self.fx
-            y = (center_y - self.cy) * depth / self.fy
-            z = depth
+    #         # 转换为3D坐标
+    #         x = (center_x - self.cx) * depth / self.fx
+    #         y = (center_y - self.cy) * depth / self.fy
+    #         z = depth
             
-            # 创建并发布PointStamped消息
-            point_msg = PointStamped()
-            point_msg.header = header
-            point_msg.header.frame_id = "camera_link"
-            point_msg.point.x = x
-            point_msg.point.y = y
-            point_msg.point.z = z
+    #         # 创建并发布PointStamped消息
+    #         point_msg = PointStamped()
+    #         point_msg.header = header
+    #         point_msg.header.frame_id = "camera_link"
+    #         point_msg.point.x = x
+    #         point_msg.point.y = y
+    #         point_msg.point.z = z
             
-            self.person_point_pub.publish(point_msg)
+    #         self.person_point_pub.publish(point_msg)
 
     def print_tracking_info(self, tracks: List[Dict]):
         """打印跟踪信息"""
