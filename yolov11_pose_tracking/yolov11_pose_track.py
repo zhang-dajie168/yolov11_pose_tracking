@@ -683,7 +683,7 @@ class Yolov11PoseNode(Node):
         image[:] = display_image[:]
             
     def publish_tracked_keypoints(self, tracks: List[Dict], header):
-        """发布边界框、所有关键点坐标和置信度"""
+        """发布边界框和肩部关键点坐标和置信度"""
         # 检查当前是否有跟踪目标
         has_tracking_target = False
         current_tracking_id = self.current_tracking_id
@@ -707,33 +707,44 @@ class Yolov11PoseNode(Node):
                 polygon_msg.header.frame_id = "camera_link"
                 
                 # 第一个点存储状态信息和关键点数量
-                # x=track_id, y=状态(1正常/0丢失), z=关键点数量
+                # x=track_id, y=状态(1正常/0丢失), z=关键点数量(这里固定为2，表示只发布两个肩部点)
                 points = [
-                    Point32(x=float(track_id), y=1.0, z=float(len(keypoints))),  # 状态信息
+                    Point32(x=float(track_id), y=1.0, z=2.0),  # 状态信息：z=2表示两个关键点
                     Point32(x=float(x1), y=float(y1), z=0.0),   # 边界框左上角
                     Point32(x=float(x2), y=float(y2), z=0.0),   # 边界框右下角
                 ]
                 
-                # 添加所有关键点坐标 (x, y坐标)
-                for i, kp in enumerate(keypoints):
-                    if i >= 30:  # 限制最大关键点数量，避免消息过大
-                        break
-                    if not np.isnan(kp).any() and not (kp[0] == 0 and kp[1] == 0):
-                        points.append(Point32(x=float(kp[0]), y=float(kp[1]), z=0.0))
+                # 只添加左肩和右肩两个关键点
+                shoulder_indices = [
+                    self.KEYPOINT_NAMES['LEFT_SHOULDER'],
+                    self.KEYPOINT_NAMES['RIGHT_SHOULDER']
+                ]
+                
+                # shoulder_names = ['LEFT_SHOULDER', 'RIGHT_SHOULDER']
+                
+                for i, kp_index in enumerate(shoulder_indices):
+                    if kp_index < len(keypoints):
+                        kp = keypoints[kp_index]
+                        conf = keypoints_conf[kp_index] if kp_index < len(keypoints_conf) else 0.0
+                        
+                        if not np.isnan(kp).any() and not (kp[0] == 0 and kp[1] == 0):
+                            # 关键点坐标 (x, y坐标)
+                            points.append(Point32(x=float(kp[0]), y=float(kp[1]), z=float(conf)))
+                        
+                        else:
+                            # 无效关键点
+                            points.append(Point32(x=0.0, y=0.0, z=0.0))
                     else:
-                        points.append(Point32(x=0.0, y=0.0, z=0.0))  # 无效关键点
-                
-                # 添加关键点置信度 (存储在z坐标中)
-                for i, conf in enumerate(keypoints_conf):
-                    if i >= 30:  # 限制最大关键点数量
-                        break
-                    # 找到对应的关键点索引，置信度存储在z坐标中
-                    conf_index = 3 + i  # 前3个点是状态和边界框信息
-                    if conf_index < len(points):
-                        points[conf_index].z = float(conf)
-                
+                        # 关键点索引超出范围
+                        points.append(Point32(x=0.0, y=0.0, z=0.0))
+
                 polygon_msg.polygon.points = points
                 self.keypoint_tracks_pub.publish(polygon_msg)
+                
+                # # 可选：添加调试信息
+                # self.get_logger().info(f"发布肩部关键点: ID {track_id}, "
+                #                     f"左肩: ({points[3].x:.1f}, {points[3].y:.1f}, conf={points[3].z:.3f}), "
+                #                     f"右肩: ({points[4].x:.1f}, {points[4].y:.1f}, conf={points[4].z:.3f})")
         
         # 如果当前应该有跟踪目标但目标丢失了
         if current_tracking_id is not None and not has_tracking_target:
