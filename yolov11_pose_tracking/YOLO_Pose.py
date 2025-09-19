@@ -208,7 +208,10 @@ class YOLO11_Pose(BaseModel):
         ids = np.concatenate((s_ids, m_ids, l_ids), axis=0)
         kpts_xy = np.concatenate((s_kpts_xy, m_kpts_xy, l_kpts_xy), axis=0)
         kpts_score  = np.concatenate((s_kpts_score, m_kpts_score, l_kpts_score), axis=0)
-
+    
+        # 对关键点置信度进行sigmoid处理，转换为0-1范围内的概率值
+        kpts_score = 1 / (1 + np.exp(-kpts_score))
+        
         # nms
         indices = cv2.dnn.NMSBoxes(dbboxes, scores, self.conf, self.iou)
 

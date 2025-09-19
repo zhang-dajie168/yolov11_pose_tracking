@@ -683,14 +683,14 @@ class Yolov11PoseNode(Node):
         image[:] = display_image[:]
             
     def publish_tracked_keypoints(self, tracks: List[Dict], header):
-        """发布边界框的四个角点，包含目标状态信息"""
+        """发布边界框、所有关键点坐标和置信度"""
         # 检查当前是否有跟踪目标
         has_tracking_target = False
-        current_tracking_id = self.current_tracking_id  # 保存当前跟踪ID的引用
+        current_tracking_id = self.current_tracking_id
         
         for track in tracks:
             track_id = track['track_id']
-            # 检查是否是当前跟踪的目标（即使current_tracking_id为None，也要检查之前的状态）
+            # 检查是否是当前跟踪的目标
             is_tracking_target = (
                 (current_tracking_id is not None and track_id == current_tracking_id) or
                 (track_id in self.tracked_persons and self.tracked_persons[track_id]['is_tracking'])
@@ -699,50 +699,69 @@ class Yolov11PoseNode(Node):
             if is_tracking_target:
                 has_tracking_target = True
                 x1, y1, x2, y2 = track['bbox']
+                keypoints = track['keypoints']
+                keypoints_conf = track['keypoints_conf']
                 
                 polygon_msg = PolygonStamped()
                 polygon_msg.header = header
                 polygon_msg.header.frame_id = "camera_link"
                 
-                # 添加目标状态信息到消息中
-                # 使用第一个点存储状态信息：x=track_id, y=1(正常), z=0(保留)
+                # 第一个点存储状态信息和关键点数量
+                # x=track_id, y=状态(1正常/0丢失), z=关键点数量
                 points = [
-                    Point32(x=float(track_id), y=1.0, z=0.0),  # 状态点：y=1表示目标正常
-                    Point32(x=float(x1), y=float(y1), z=0.0),   # 左上角
-                    Point32(x=float(x2), y=float(y2), z=0.0),   # 右下角
+                    Point32(x=float(track_id), y=1.0, z=float(len(keypoints))),  # 状态信息
+                    Point32(x=float(x1), y=float(y1), z=0.0),   # 边界框左上角
+                    Point32(x=float(x2), y=float(y2), z=0.0),   # 边界框右下角
                 ]
+                
+                # 添加所有关键点坐标 (x, y坐标)
+                for i, kp in enumerate(keypoints):
+                    if i >= 30:  # 限制最大关键点数量，避免消息过大
+                        break
+                    if not np.isnan(kp).any() and not (kp[0] == 0 and kp[1] == 0):
+                        points.append(Point32(x=float(kp[0]), y=float(kp[1]), z=0.0))
+                    else:
+                        points.append(Point32(x=0.0, y=0.0, z=0.0))  # 无效关键点
+                
+                # 添加关键点置信度 (存储在z坐标中)
+                for i, conf in enumerate(keypoints_conf):
+                    if i >= 30:  # 限制最大关键点数量
+                        break
+                    # 找到对应的关键点索引，置信度存储在z坐标中
+                    conf_index = 3 + i  # 前3个点是状态和边界框信息
+                    if conf_index < len(points):
+                        points[conf_index].z = float(conf)
                 
                 polygon_msg.polygon.points = points
                 self.keypoint_tracks_pub.publish(polygon_msg)
         
-        # 如果当前应该有跟踪目标但目标丢失了或者被取消了
+        # 如果当前应该有跟踪目标但目标丢失了
         if current_tracking_id is not None and not has_tracking_target:
             polygon_msg = PolygonStamped()
             polygon_msg.header = header
             polygon_msg.header.frame_id = "camera_link"
             
-            # 发布目标丢失状态：y=0表示目标丢失
+            # 发布目标丢失状态
             points = [
                 Point32(x=float(current_tracking_id), y=0.0, z=0.0),  # 状态点：y=0表示目标丢失
-                Point32(x=0.0, y=0.0, z=0.0),  # 无效坐标
-                Point32(x=0.0, y=0.0, z=0.0),  # 无效坐标
+                Point32(x=0.0, y=0.0, z=0.0),  # 无效边界框坐标
+                Point32(x=0.0, y=0.0, z=0.0),  # 无效边界框坐标
             ]
             
             polygon_msg.polygon.points = points
             self.keypoint_tracks_pub.publish(polygon_msg)
             self.get_logger().info(f"发布目标丢失状态: ID {current_tracking_id}")
         
-        # 处理跟踪被取消的情况（current_tracking_id为None但之前有跟踪目标）
-        elif current_tracking_id is None :
-        
+        # 处理跟踪被取消的情况
+        elif current_tracking_id is None:
             polygon_msg = PolygonStamped()
             polygon_msg.header = header
             polygon_msg.header.frame_id = "camera_link"
             
             points = [
+                Point32(x=0.0, y=0.0, z=0.0),  # 无跟踪目标
                 Point32(x=0.0, y=0.0, z=0.0),
-                Point32(x=0.0, y=0.0, z=0.0),  # 无效坐标
-                Point32(x=0.0, y=0.0, z=0.0),  # 无效坐标
+                Point32(x=0.0, y=0.0, z=0.0),
             ]
             
             polygon_msg.polygon.points = points
