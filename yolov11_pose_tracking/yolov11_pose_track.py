@@ -681,7 +681,7 @@ class Yolov11PoseNode(Node):
                     cv2.line(display_image, pt1, pt2, (0, 255, 255), 2)
 
         image[:] = display_image[:]
-        
+            
     def publish_tracked_keypoints(self, tracks: List[Dict], header):
         """发布边界框和肩部关键点坐标和置信度"""
         # 检查当前是否有跟踪目标
@@ -741,10 +741,11 @@ class Yolov11PoseNode(Node):
                 polygon_msg.polygon.points = points
                 self.keypoint_tracks_pub.publish(polygon_msg)
                 
-                # 可选：添加调试信息
-                self.get_logger().info(f"发布肩部关键点: ID {track_id}, "
-                                    f"左肩: ({points[3].x:.1f}, {points[3].y:.1f}, conf={points[3].z:.3f}), "
-                                    f"右肩: ({points[4].x:.1f}, {points[4].y:.1f}, conf={points[4].z:.3f})")
+                # # 可选：添加调试信息
+                # self.get_logger().info(f"发布肩部关键点: ID {track_id}, "
+                #                     f"左肩: ({points[3].x:.1f}, {points[3].y:.1f}, conf={points[3].z:.3f}), "
+                #                     f"右肩: ({points[4].x:.1f}, {points[4].y:.1f}, conf={points[4].z:.3f})")
+
         
         # 如果当前应该有跟踪目标但目标丢失了
         if current_tracking_id is not None and not has_tracking_target:
