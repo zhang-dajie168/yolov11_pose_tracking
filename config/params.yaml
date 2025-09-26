@@ -23,17 +23,16 @@ yolov11_pose_node:
     tracking_protection_time: 5.0
     
     # ReID相关参数
-    reid_similarity_threshold: 0.73
-    max_lost_frames_for_recovery: 5
-    feature_update_interval: 5.0
+    reid_similarity_threshold: 0.80
+    feature_update_interval: 1.0
     reid_model_path: "/home/sunrise/Ebike_Human_Follower/src/yolov11_pose_tracking/models/osnet_64x128_nv12.bin"
     
-    # BOTSORT跟踪器参数
-    track_high_thresh: 0.25
-    track_low_thresh: 0.1
-    new_track_thresh: 0.25
-    fuse_score: true
-    gmc_method: "sparseOptFlow"
-    proximity_thresh: 0.5
-    appearance_thresh: 0.7
-    with_reid: false
+    # # BOTSORT跟踪器参数
+    # track_high_thresh: 0.25
+    # track_low_thresh: 0.1
+    # new_track_thresh: 0.25
+    # fuse_score: true
+    # gmc_method: "sparseOptFlow"
+    # proximity_thresh: 0.5
+    # appearance_thresh: 0.7
+    # with_reid: false
