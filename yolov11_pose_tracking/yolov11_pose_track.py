@@ -136,7 +136,7 @@ class Yolov11PoseNode(Node):
         self.tracking_protection_time = self.get_parameter('tracking_protection_time').value
         self.reid_similarity_threshold = self.get_parameter('reid_similarity_threshold').value
         self.feature_update_interval = self.get_parameter('feature_update_interval').value
-        reid_model_path = self.get_parameter('reid_model_path').value
+        # reid_model_path = self.get_parameter('reid_model_path').value
 
     def _initialize_components(self):
         """初始化模型和跟踪器"""
@@ -159,7 +159,7 @@ class Yolov11PoseNode(Node):
             'track_high_thresh': 0.25,
             'track_low_thresh': 0.1,
             'new_track_thresh': 0.25,
-            'track_buffer': 2,
+            'track_buffer': 10,
             'match_thresh': 0.68,
             'fuse_score': False,
             'gmc_method': 'sparseOptFlow',
@@ -816,101 +816,75 @@ class Yolov11PoseNode(Node):
                     break
 
     def publish_tracked_keypoints(self, tracks: List[Dict], header):
-        """发布边界框和肩部关键点坐标和置信度"""
-        # 检查当前是否有跟踪目标
-        has_tracking_target = False
+        """发布边界框和肩部关键点坐标和置信度 - 简化优化版"""
         current_tracking_id = self.current_tracking_id
         
+        # 查找当前跟踪的目标
+        tracking_target = None
         for track in tracks:
             track_id = track['track_id']
-            # 检查是否是当前跟踪的目标
-            is_tracking_target = (
-                (current_tracking_id is not None and track_id == current_tracking_id) or
-                (track_id in self.tracked_persons and self.tracked_persons[track_id]['is_tracking'])
-            )
-            
-            if is_tracking_target:
-                has_tracking_target = True
-                x1, y1, x2, y2 = track['bbox']
-                keypoints = track['keypoints']
-                keypoints_conf = track['keypoints_conf']
-                
-                polygon_msg = PolygonStamped()
-                polygon_msg.header = header
-                polygon_msg.header.frame_id = "camera_link"
-                
-                # 第一个点存储状态信息和关键点数量
-                # x=track_id, y=状态(1正常/0丢失), z=关键点数量(这里固定为2，表示只发布两个肩部点)
-                points = [
-                    Point32(x=float(track_id), y=1.0, z=2.0),  # 状态信息：z=2表示两个关键点
-                    Point32(x=float(x1), y=float(y1), z=0.0),   # 边界框左上角
-                    Point32(x=float(x2), y=float(y2), z=0.0),   # 边界框右下角
-                ]
-                
-                # 只添加左肩和右肩两个关键点
-                shoulder_indices = [
-                    self.KEYPOINT_NAMES['LEFT_SHOULDER'],
-                    self.KEYPOINT_NAMES['RIGHT_SHOULDER']
-                ]
-                
-                # shoulder_names = ['LEFT_SHOULDER', 'RIGHT_SHOULDER']
-                
-                for i, kp_index in enumerate(shoulder_indices):
-                    if kp_index < len(keypoints):
-                        kp = keypoints[kp_index]
-                        conf = keypoints_conf[kp_index] if kp_index < len(keypoints_conf) else 0.0
-                        
-                        if not np.isnan(kp).any() and not (kp[0] == 0 and kp[1] == 0):
-                            # 关键点坐标 (x, y坐标)
-                            points.append(Point32(x=float(kp[0]), y=float(kp[1]), z=float(conf)))
-                        
-                        else:
-                            # 无效关键点
-                            points.append(Point32(x=0.0, y=0.0, z=0.0))
-                    else:
-                        # 关键点索引超出范围
-                        points.append(Point32(x=0.0, y=0.0, z=0.0))
-
-                polygon_msg.polygon.points = points
-                self.keypoint_tracks_pub.publish(polygon_msg)
-                
-                # # 可选：添加调试信息
-                # self.get_logger().info(f"发布肩部关键点: ID {track_id}, "
-                #                     f"左肩: ({points[3].x:.1f}, {points[3].y:.1f}, conf={points[3].z:.3f}), "
-                #                     f"右肩: ({points[4].x:.1f}, {points[4].y:.1f}, conf={points[4].z:.3f})")
-
+            if (current_tracking_id is not None and track_id == current_tracking_id) or \
+            (track_id in self.tracked_persons and self.tracked_persons[track_id]['is_tracking']):
+                tracking_target = track
+                break
         
-        # 如果当前应该有跟踪目标但目标丢失了
-        if current_tracking_id is not None and not has_tracking_target:
-            polygon_msg = PolygonStamped()
-            polygon_msg.header = header
-            polygon_msg.header.frame_id = "camera_link"
+        polygon_msg = PolygonStamped()
+        polygon_msg.header = header
+        polygon_msg.header.frame_id = "camera_link"
+        
+        if tracking_target:
+            # 发布正常跟踪状态
+            track_id = tracking_target['track_id']
+            x1, y1, x2, y2 = tracking_target['bbox']
+            keypoints = tracking_target['keypoints']
+            keypoints_conf = tracking_target['keypoints_conf']
             
+            # 构建消息点：状态信息 + 边界框 + 肩部关键点
+            points = [
+                Point32(x=float(track_id), y=1.0, z=2.0),  # 状态点
+                Point32(x=float(x1), y=float(y1), z=0.0),   # 边界框左上
+                Point32(x=float(x2), y=float(y2), z=0.0),   # 边界框右下
+            ]
+            
+            # 添加肩部关键点
+            shoulder_indices = [
+                self.KEYPOINT_NAMES['LEFT_SHOULDER'],
+                self.KEYPOINT_NAMES['RIGHT_SHOULDER']
+            ]
+            
+            for kp_index in shoulder_indices:
+                if kp_index < len(keypoints):
+                    kp = keypoints[kp_index]
+                    conf = keypoints_conf[kp_index] if kp_index < len(keypoints_conf) else 0.0
+                    
+                    if not np.isnan(kp).any() and not (kp[0] == 0 and kp[1] == 0):
+                        points.append(Point32(x=float(kp[0]), y=float(kp[1]), z=float(conf)))
+                    else:
+                        points.append(Point32(x=0.0, y=0.0, z=0.0))
+                else:
+                    points.append(Point32(x=0.0, y=0.0, z=0.0))
+            
+            polygon_msg.polygon.points = points
+            
+        elif current_tracking_id is not None:
             # 发布目标丢失状态
             points = [
-                Point32(x=float(current_tracking_id), y=0.0, z=0.0),  # 状态点：y=0表示目标丢失
-                Point32(x=0.0, y=0.0, z=0.0),  # 无效边界框坐标
-                Point32(x=0.0, y=0.0, z=0.0),  # 无效边界框坐标
+                Point32(x=float(current_tracking_id), y=0.0, z=0.0),  # 状态点：y=0表示丢失
+                Point32(x=0.0, y=0.0, z=0.0),
+                Point32(x=0.0, y=0.0, z=0.0),
+                Point32(x=0.0, y=0.0, z=0.0),
+                Point32(x=0.0, y=0.0, z=0.0)
             ]
-            
             polygon_msg.polygon.points = points
-            self.keypoint_tracks_pub.publish(polygon_msg)
             self.get_logger().info(f"发布目标丢失状态: ID {current_tracking_id}")
         
-        # 处理跟踪被取消的情况
-        elif current_tracking_id is None:
-            polygon_msg = PolygonStamped()
-            polygon_msg.header = header
-            polygon_msg.header.frame_id = "camera_link"
-            
-            points = [
-                Point32(x=0.0, y=0.0, z=0.0),  # 无跟踪目标
-                Point32(x=0.0, y=0.0, z=0.0),
-                Point32(x=0.0, y=0.0, z=0.0),
-            ]
-            
+        else:
+            # 无跟踪目标状态
+            points = [Point32(x=0.0, y=0.0, z=0.0) for _ in range(5)]  # 5个零值点
             polygon_msg.polygon.points = points
-            self.keypoint_tracks_pub.publish(polygon_msg)
+        
+        # 发布消息
+        self.keypoint_tracks_pub.publish(polygon_msg)
 
 def main(args=None):
     rclpy.init(args=args)
