@@ -477,20 +477,7 @@ class Yolov11PoseNode(Node):
                 self.get_logger().error(f"Depth image conversion error: {str(e)}")
 
     def image_callback(self, msg):
-        # 获取当前时间
         current_time = time.time()
-        
-        # 计算与上一帧的时间差
-        if hasattr(self, 'last_callback_time'):
-            time_diff = current_time - self.last_callback_time
-            self.get_logger().info(f"图像接收时间差: {time_diff:.3f}s ({1.0/time_diff:.1f}FPS)")
-        else:
-            self.get_logger().debug("接收到第一帧图像")
-        
-        # 更新上一帧时间
-        self.last_callback_time = current_time
-        
-        # 原有的处理频率控制
         if current_time - self.last_process_time < self.min_process_interval:
             return
         
@@ -649,10 +636,6 @@ class Yolov11PoseNode(Node):
                 detect_pose_msg = self.bridge.cv2_to_imgmsg(cv_image, encoding='bgr8')
                 detect_pose_msg.header = msg.header
                 self.detect_pose_pub.publish(detect_pose_msg)
-
-            # 计算并记录总处理时间
-            total_process_time = time.time() - total_start_time
-            self.get_logger().info(f"图像处理总时间: {total_process_time:.3f}s")
 
         except Exception as e:
             self.get_logger().error(f"Image processing error: {str(e)}")
