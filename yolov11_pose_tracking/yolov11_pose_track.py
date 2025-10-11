@@ -396,7 +396,7 @@ class Yolov11PoseNode(Node):
                 np.linalg.norm(target.feature) * np.linalg.norm(candidate_feature) + 1e-8
             )
             
-            if similarity >= 0.8:
+            if similarity >=  self.reid_similarity_threshold:
                 self.get_logger().info(f"ReID验证成功: ID {track_id}, 相似度: {similarity:.3f}")
                 
                 target.mark_recovered(timestamp)
@@ -876,7 +876,7 @@ class Yolov11PoseNode(Node):
                 Point32(x=0.0, y=0.0, z=0.0)
             ]
             polygon_msg.polygon.points = points
-            self.get_logger().info(f"发布目标丢失状态: ID {current_tracking_id}")
+            # self.get_logger().info(f"发布目标丢失状态: ID {current_tracking_id}")
         
         else:
             # 无跟踪目标状态
