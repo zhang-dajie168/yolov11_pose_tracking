@@ -24,6 +24,7 @@ yolov11_pose_node:
     
     # ReID相关参数
     reid_similarity_threshold: 0.73
+    height_change_threshold: 0.15  # 新增高度变化阈值
     feature_update_interval: 1.0
     reid_model_path: "/home/sunrise/Ebike_Human_Follower/src/yolov11_pose_tracking/models/osnet_64x128_nv12.bin"
     

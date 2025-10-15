@@ -12,29 +12,13 @@ import numpy as np
 import time
 from typing import List, Dict, Optional, Tuple
 from collections import deque
-import threading 
+# import threading 
 import copy
 
 # 导入RDK YOLO模型和BOTSORT跟踪器
 from .YOLO_Pose import YOLO11_Pose
 from .BOTSort_rdk import BOTSORT, OSNetReID
 
-class DepthFilter:
-    """深度滤波器 - 优化内存分配"""
-    __slots__ = ('depth_window_size', 'depth_threshold', 'depth_window')
-    
-    def __init__(self, depth_window_size=5, depth_threshold=0.5):
-        self.depth_window_size = depth_window_size
-        self.depth_threshold = depth_threshold
-        self.depth_window = deque(maxlen=depth_window_size)
-
-    def add_depth(self, depth):
-        self.depth_window.append(depth)
-
-    def get_filtered_depth(self):
-        if not self.depth_window:
-            return 0.0
-        return np.median(self.depth_window) if len(self.depth_window) > 1 else self.depth_window[-1]
 
 class TrackedTarget:
     """跟踪目标信息类 - 使用__slots__优化内存"""
@@ -89,12 +73,6 @@ class Yolov11PoseNode(Node):
     def __init__(self):
         super().__init__('yolov11_pose_node')
 
-        # Camera intrinsics (Orbbec Gemini 335L 640x480)
-        self.fx = 367.21
-        self.fy = 316.44
-        self.cx = 367.20
-        self.cy = 244.60
-
         # 声明参数
         self._declare_parameters()
         
@@ -118,11 +96,11 @@ class Yolov11PoseNode(Node):
         self.declare_parameter('model_path', '')
         self.declare_parameter('conf_threshold', 0.3)
         self.declare_parameter('kpt_conf_threshold', 0.25)
-        self.declare_parameter('real_person_height', 1.7)
         self.declare_parameter('max_processing_fps', 15)
         self.declare_parameter('hands_up_confirm_frames', 3)
         self.declare_parameter('tracking_protection_time', 5.0)
         self.declare_parameter('reid_similarity_threshold', 0.8)
+        self.declare_parameter('height_change_threshold', 0.15)
         self.declare_parameter('feature_update_interval', 1.0)
         self.declare_parameter('reid_model_path', 'osnet_64x128_nv12.bin')
 
@@ -130,11 +108,11 @@ class Yolov11PoseNode(Node):
         """获取参数值"""
         self.conf_threshold = self.get_parameter('conf_threshold').value
         self.kpt_conf_threshold = self.get_parameter('kpt_conf_threshold').value
-        self.real_person_height = self.get_parameter('real_person_height').value
         self.max_processing_fps = self.get_parameter('max_processing_fps').value
         self.hands_up_confirm_frames = self.get_parameter('hands_up_confirm_frames').value
         self.tracking_protection_time = self.get_parameter('tracking_protection_time').value
         self.reid_similarity_threshold = self.get_parameter('reid_similarity_threshold').value
+        self.height_change_threshold = self.get_parameter('height_change_threshold').value
         self.feature_update_interval = self.get_parameter('feature_update_interval').value
         # reid_model_path = self.get_parameter('reid_model_path').value
 
@@ -183,19 +161,14 @@ class Yolov11PoseNode(Node):
         
         # 创建订阅和发布
         self.image_sub = self.create_subscription(Image, '/camera/color/image_raw', self.image_callback, 10)
-        self.depth_sub = self.create_subscription(Image, '/camera/depth/image_raw', self.depth_callback, 10)
         self.detect_pose_pub = self.create_publisher(Image, 'tracks', 10)
-        self.person_point_pub = self.create_publisher(PointStamped, '/person_positions', 10)
         self.keypoint_tracks_pub = self.create_publisher(PolygonStamped, '/keypoint_tracks', 10)
 
     def _initialize_variables(self):
         """初始化变量"""
         # 跟踪和深度相关变量
         self.tracked_persons: Dict[int, Dict] = {}
-        self.depth_image = None
-        self.depth_lock = threading.Lock()
-        self.depth_filters: Dict[int, DepthFilter] = {}
-        
+
         # 举手检测相关变量
         self.hands_up_history: Dict[int, deque] = {}
         
@@ -226,11 +199,11 @@ class Yolov11PoseNode(Node):
         self.get_logger().info("===== 参数配置信息 =====")
         self.get_logger().info(f"置信度阈值: {self.conf_threshold}")
         self.get_logger().info(f"关键点置信度阈值: {self.kpt_conf_threshold}")
-        self.get_logger().info(f"真实人身高: {self.real_person_height}m")
         self.get_logger().info(f"最大处理帧率: {self.max_processing_fps}FPS")
         self.get_logger().info(f"举手确认帧数: {self.hands_up_confirm_frames}")
         self.get_logger().info(f"跟踪保护时间: {self.tracking_protection_time}s")
         self.get_logger().info(f"ReID相似度阈值: {self.reid_similarity_threshold}")
+        self.get_logger().info(f"高度变化阈值: {self.height_change_threshold}")
         self.get_logger().info(f"特征更新间隔: {self.feature_update_interval}s")
         self.get_logger().info("=========================")
 
@@ -309,7 +282,7 @@ class Yolov11PoseNode(Node):
         target.update(bbox, feature, height_pixels, timestamp)
 
     def try_recover_lost_target(self, current_tracks: List[Dict], image: np.ndarray, timestamp: float) -> Optional[int]:
-        """立即尝试找回丢失的跟踪目标"""
+        """立即尝试找回丢失的跟踪目标 - 增加高度筛选"""
         if self.current_tracking_id is None or self.current_tracking_id not in self.tracked_targets:
             return None
         
@@ -336,6 +309,10 @@ class Yolov11PoseNode(Node):
         if not candidate_tracks:
             return None
         
+        # 获取丢失目标的高度信息
+        target_height_pixels = target.height_pixels
+        self.get_logger().info(f"目标 {self.current_tracking_id} 丢失时高度: {target_height_pixels:.1f}px")
+        
         # ReID匹配
         best_match_id = None
         best_similarity = 0.0
@@ -344,12 +321,30 @@ class Yolov11PoseNode(Node):
             track_id = track['track_id']
             bbox = track['bbox']
             
+            # 计算当前候选目标的高度
+            x1, y1, x2, y2 = bbox
+            candidate_height_pixels = y2 - y1
+            
+            # 高度变化筛选
+            height_ratio = candidate_height_pixels / target_height_pixels
+            height_change = abs(1.0 - height_ratio)
+            
+            self.get_logger().info(f"候选目标 ID:{track_id} 高度: {candidate_height_pixels:.1f}px, 高度变化: {height_change:.3f}")
+            
+            # 如果高度变化超过阈值，跳过该候选目标
+            if height_change > self.height_change_threshold:
+                self.get_logger().warning(f"候选目标 ID:{track_id} 高度变化 {height_change:.3f} 超过阈值 {self.height_change_threshold}, 跳过匹配")
+                continue
+            
             candidate_feature = self.extract_feature_from_bbox(image, bbox)
             
             if candidate_feature is not None and np.any(candidate_feature):
                 similarity = np.dot(target.feature, candidate_feature) / (
                     np.linalg.norm(target.feature) * np.linalg.norm(candidate_feature) + 1e-8
                 )
+                
+                # 记录匹配信息（包括高度信息）
+                self.get_logger().info(f"候选目标 ID:{track_id} ReID相似度: {similarity:.3f}, 高度变化: {height_change:.3f}")
                 
                 if similarity >= self.reid_similarity_threshold and similarity > best_similarity:
                     best_similarity = similarity
@@ -385,9 +380,25 @@ class Yolov11PoseNode(Node):
         return None
 
     def _verify_target_with_reid(self, target: TrackedTarget, track: Dict, image: np.ndarray, timestamp: float) -> Optional[int]:
-        """使用ReID验证目标身份"""
+        """使用ReID验证目标身份 - 增加高度筛选"""
         track_id = track['track_id']
         bbox = track['bbox']
+        
+        # 计算当前目标的高度
+        x1, y1, x2, y2 = bbox
+        candidate_height_pixels = y2 - y1
+        target_height_pixels = target.height_pixels
+        
+        # 高度变化筛选
+        height_ratio = candidate_height_pixels / target_height_pixels
+        height_change = abs(1.0 - height_ratio)
+        
+        self.get_logger().info(f"验证目标 ID:{track_id} 高度: {candidate_height_pixels:.1f}px, 原高度: {target_height_pixels:.1f}px, 高度变化: {height_change:.3f}")
+        
+        # 如果高度变化超过阈值，直接返回失败
+        if height_change > self.height_change_threshold:
+            self.get_logger().warning(f"验证目标 ID:{track_id} 高度变化 {height_change:.3f} 超过阈值 {self.height_change_threshold}, 验证失败")
+            return None
         
         candidate_feature = self.extract_feature_from_bbox(image, bbox)
         
@@ -396,8 +407,8 @@ class Yolov11PoseNode(Node):
                 np.linalg.norm(target.feature) * np.linalg.norm(candidate_feature) + 1e-8
             )
             
-            if similarity >=  self.reid_similarity_threshold:
-                self.get_logger().info(f"ReID验证成功: ID {track_id}, 相似度: {similarity:.3f}")
+            if similarity >= self.reid_similarity_threshold:
+                self.get_logger().info(f"ReID验证成功: ID {track_id}, 相似度: {similarity:.3f}, 高度变化: {height_change:.3f}")
                 
                 target.mark_recovered(timestamp)
                 self.save_tracked_target(target.track_id, bbox, image, timestamp)
@@ -417,61 +428,6 @@ class Yolov11PoseNode(Node):
         
         return None
 
-    def estimate_depth_from_bbox_height(self, bbox_height_pixels: float) -> float:
-        """基于边界框高度估计深度"""
-        return (self.real_person_height * self.fy) / bbox_height_pixels
-
-    def _get_keypoints_depth(self, keypoints: np.ndarray) -> float:
-        """从关键点获取深度 - 优化计算"""
-        valid_kps_indices = [
-            self.KEYPOINT_NAMES['LEFT_SHOULDER'],
-            self.KEYPOINT_NAMES['RIGHT_SHOULDER'],
-            self.KEYPOINT_NAMES['LEFT_HIP'],
-            self.KEYPOINT_NAMES['RIGHT_HIP']
-        ]
-        
-        valid_depths = []
-        with self.depth_lock:
-            if self.depth_image is None:
-                return 0.0
-                
-            for idx in valid_kps_indices:
-                if idx >= len(keypoints) or np.isnan(keypoints[idx]).any() or (keypoints[idx][0] == 0 and keypoints[idx][1] == 0):
-                    continue
-                x, y = keypoints[idx].astype(int)
-                if 0 <= x < self.depth_image.shape[1] and 0 <= y < self.depth_image.shape[0]:
-                    depth = self.depth_image[y, x] / 1000.0
-                    if 0.5 < depth < 8.0:
-                        valid_depths.append(depth)
-        
-        return np.median(valid_depths) if valid_depths else 0.0
-
-    def compute_body_depth(self, bbox: List[float], keypoints: np.ndarray, track_id: int) -> float:
-        """融合关键点深度和边界框高度估计"""
-        keypoints_depth = self._get_keypoints_depth(keypoints)
-        
-        _, y1, _, y2 = bbox
-        bbox_height = y2 - y1
-        bbox_estimated_depth = self.estimate_depth_from_bbox_height(bbox_height)
-        
-        if keypoints_depth <= 0:
-            final_depth = bbox_estimated_depth
-        else:
-            final_depth = (keypoints_depth * 0.7 + bbox_estimated_depth * 0.3)
-        
-        if track_id not in self.depth_filters:
-            self.depth_filters[track_id] = DepthFilter()
-        
-        self.depth_filters[track_id].add_depth(final_depth)
-        return self.depth_filters[track_id].get_filtered_depth()
-
-    def depth_callback(self, msg):
-        """深度图像回调 - 优化内存分配"""
-        with self.depth_lock:
-            try:
-                self.depth_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
-            except Exception as e:
-                self.get_logger().error(f"Depth image conversion error: {str(e)}")
 
     def image_callback(self, msg):
         """图像回调 - 优化性能"""
@@ -571,7 +527,6 @@ class Yolov11PoseNode(Node):
             'first_seen_time': current_time,
             'last_seen_time': current_time
         }
-        self.depth_filters[track_id] = DepthFilter()
         self.hands_up_history[track_id] = deque(maxlen=self.hands_up_confirm_frames)
 
     def _handle_new_tracking(self, track_id: int, person: Dict, hands_up_confirmed: bool, 
@@ -675,8 +630,6 @@ class Yolov11PoseNode(Node):
         """移除跟踪目标"""
         if track_id in self.tracked_persons:
             del self.tracked_persons[track_id]
-        if track_id in self.depth_filters:
-            del self.depth_filters[track_id]
         if track_id in self.hands_up_history:
             del self.hands_up_history[track_id]
         if track_id in self.tracked_targets:
@@ -730,7 +683,6 @@ class Yolov11PoseNode(Node):
     def _publish_results(self, image: np.ndarray, tracks: List[Dict], header):
         """发布结果 - 合并可视化"""
         self.visualize_results(image, tracks)
-        self.publish_person_positions(tracks, header)
         self.publish_tracked_keypoints(tracks, header)
 
         # 只在有订阅者时才进行可视化发布
@@ -803,31 +755,6 @@ class Yolov11PoseNode(Node):
 
         # 更新图像
         image[:] = display_image
-
-    def publish_person_positions(self, tracks: List[Dict], header):
-        """发布人员位置信息 - 优化计算"""
-        for track in tracks:
-            track_id = track['track_id']
-            
-            if (track_id == self.current_tracking_id and 
-                track_id in self.tracked_persons and 
-                self.tracked_persons[track_id]['is_tracking']):
-                
-                depth = self.compute_body_depth(track['bbox'], track['keypoints'], track_id)
-                
-                if depth > 0:
-                    x1, y1, x2, y2 = track['bbox']
-                    center_x = (x1 + x2) / 2
-                    center_y = (y1 + y2) / 2
-                    
-                    point_msg = PointStamped()
-                    point_msg.header = header
-                    point_msg.point.x = (center_x - self.cx) * depth / self.fx
-                    point_msg.point.y = (center_y - self.cy) * depth / self.fy
-                    point_msg.point.z = depth
-                    
-                    self.person_point_pub.publish(point_msg)
-                    break
 
     def publish_tracked_keypoints(self, tracks: List[Dict], header):
         """发布边界框和肩部关键点坐标和置信度 - 简化优化版"""
