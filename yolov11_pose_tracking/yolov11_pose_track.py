@@ -329,7 +329,6 @@ class Yolov11PoseNode(Node):
             height_ratio = candidate_height_pixels / target_height_pixels
             height_change = abs(1.0 - height_ratio)
             
-            self.get_logger().info(f"候选目标 ID:{track_id} 高度: {candidate_height_pixels:.1f}px, 高度变化: {height_change:.3f}")
             
             # 如果高度变化超过阈值，跳过该候选目标
             if height_change > self.height_change_threshold:
@@ -393,8 +392,6 @@ class Yolov11PoseNode(Node):
         height_ratio = candidate_height_pixels / target_height_pixels
         height_change = abs(1.0 - height_ratio)
         
-        self.get_logger().info(f"验证目标 ID:{track_id} 高度: {candidate_height_pixels:.1f}px, 原高度: {target_height_pixels:.1f}px, 高度变化: {height_change:.3f}")
-        
         # 如果高度变化超过阈值，直接返回失败
         if height_change > self.height_change_threshold:
             self.get_logger().warning(f"验证目标 ID:{track_id} 高度变化 {height_change:.3f} 超过阈值 {self.height_change_threshold}, 验证失败")
@@ -425,7 +422,7 @@ class Yolov11PoseNode(Node):
                 return track_id
             else:
                 self.get_logger().warning(f"ReID验证失败: ID {track_id}, 相似度: {similarity:.3f}")
-        
+
         return None
 
 
@@ -487,6 +484,7 @@ class Yolov11PoseNode(Node):
 
             # 可视化并发布结果
             self._publish_results(cv_image, tracks, msg.header)
+             
 
         except Exception as e:
             self.get_logger().error(f"Image processing error: {str(e)}")
@@ -596,10 +594,11 @@ class Yolov11PoseNode(Node):
                     self.get_logger().info(f"ReID找回成功，从ID {old_tracking_id} 切换到新ID: {recovered_id}")
                 else:
                     self.get_logger().warning(f"目标 {self.current_tracking_id} ReID找回失败，保持丢失状态")
+                    
+                self.get_logger().info(f"======================================================")
         
         elif self.current_tracking_id is not None and self.current_tracking_id in current_track_ids:
             if self.target_lost_time is not None:
-                self.get_logger().info(f"目标 {self.current_tracking_id} 重新出现，进行ReID验证")
                 track = next(t for t in tracks if t['track_id'] == self.current_tracking_id)
                 verified_id = self._verify_target_with_reid(
                     self.tracked_targets[self.current_tracking_id], track, cv_image, current_time
@@ -607,12 +606,14 @@ class Yolov11PoseNode(Node):
                 
                 if verified_id is not None:
                     self.target_lost_time = None
-                    self.get_logger().info(f"目标 {self.current_tracking_id} ReID验证成功，继续跟踪")
+                    self.get_logger().info(f"目标 {self.current_tracking_id}重新出现，ReID验证成功，继续跟踪")
                     
                     if verified_id in self.tracked_persons:
                         self.tracked_persons[verified_id]['is_tracking'] = True
                         self.tracked_persons[verified_id]['last_seen_time'] = current_time
+                self.get_logger().info(f"======================================================")
 
+        
     def _cleanup_old_tracks(self, current_time: float, current_track_ids: set):
         """清理长时间未出现的跟踪目标"""
         max_track_age = 5.0
