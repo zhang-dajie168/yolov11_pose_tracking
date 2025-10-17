@@ -102,6 +102,7 @@ class Yolov11PoseNode(Node):
         self.declare_parameter('reid_similarity_threshold', 0.8)
         self.declare_parameter('height_change_threshold', 0.15)
         self.declare_parameter('feature_update_interval', 1.0)
+        self.declare_parameter('lost_timeout_threshold', 10.0)
         self.declare_parameter('reid_model_path', 'osnet_64x128_nv12.bin')
 
     def _get_parameters(self):
@@ -114,6 +115,7 @@ class Yolov11PoseNode(Node):
         self.reid_similarity_threshold = self.get_parameter('reid_similarity_threshold').value
         self.height_change_threshold = self.get_parameter('height_change_threshold').value
         self.feature_update_interval = self.get_parameter('feature_update_interval').value
+        self.lost_timeout_threshold = self.get_parameter('lost_timeout_threshold').value
         # reid_model_path = self.get_parameter('reid_model_path').value
 
     def _initialize_components(self):
@@ -205,6 +207,7 @@ class Yolov11PoseNode(Node):
         self.get_logger().info(f"ReID相似度阈值: {self.reid_similarity_threshold}")
         self.get_logger().info(f"高度变化阈值: {self.height_change_threshold}")
         self.get_logger().info(f"特征更新间隔: {self.feature_update_interval}s")
+        self.get_logger().info(f"丢失超时阈值: {self.lost_timeout_threshold}s")
         self.get_logger().info("=========================")
 
     def extract_feature_from_bbox(self, image: np.ndarray, bbox: List[float]) -> np.ndarray:
@@ -571,6 +574,15 @@ class Yolov11PoseNode(Node):
                     self.target_lost_time = current_time
                     self.get_logger().warning(f"目标 {self.current_tracking_id} 丢失，立即启动ReID找回")
                 
+                # 检查是否超时
+                time_since_lost = current_time - self.target_lost_time
+                if time_since_lost > self.lost_timeout_threshold:
+                    self.get_logger().warning(
+                        f"目标 {self.current_tracking_id} 丢失超过 {self.lost_timeout_threshold} 秒，停止跟踪并清除目标信息，需要重新举手选择跟踪目标"
+                    )
+                    self._clear_tracking_target()
+                    return
+                
                 recovered_id = self.try_recover_lost_target(tracks, cv_image, current_time)
                 if recovered_id is not None:
                     # 重要：在设置新ID前，清理原目标的跟踪状态
@@ -612,6 +624,23 @@ class Yolov11PoseNode(Node):
                         self.tracked_persons[verified_id]['is_tracking'] = True
                         self.tracked_persons[verified_id]['last_seen_time'] = current_time
                 self.get_logger().info(f"======================================================")
+
+    # 添加新的清理方法
+    def _clear_tracking_target(self):
+        """清除当前跟踪目标的所有信息"""
+        if self.current_tracking_id is not None:
+            target_id = self.current_tracking_id          
+            # 清除所有相关存储
+            if target_id in self.tracked_persons:
+                del self.tracked_persons[target_id]
+            if target_id in self.hands_up_history:
+                del self.hands_up_history[target_id]
+            if target_id in self.tracked_targets:
+                del self.tracked_targets[target_id]
+      
+        # 重置跟踪状态
+        self.current_tracking_id = None
+        self.target_lost_time = None
 
         
     def _cleanup_old_tracks(self, current_time: float, current_track_ids: set):
