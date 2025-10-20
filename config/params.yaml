@@ -4,15 +4,7 @@ yolov11_pose_node:
     model_path: "/home/sunrise/Ebike_Human_Follower/src/yolov11_pose_tracking/models/yolov8n_pose_bayese_640x640_nv12_modified.bin"
     conf_threshold: 0.7
     kpt_conf_threshold: 0.5
-    
-    # 跟踪参数
-    tracking_threshold: 0.5
-    track_buffer: 30
-    match_threshold: 0.8
-    
-    # 人体参数
-    real_person_height: 1.70
-    
+
     # 处理性能参数
     max_processing_fps: 15
     
@@ -24,17 +16,8 @@ yolov11_pose_node:
     
     # ReID相关参数
     reid_similarity_threshold: 0.73
-    height_change_threshold: 0.25  # 新增高度变化阈值
+    height_change_threshold: 0.28  # 新增高度变化阈值
     feature_update_interval: 1.0
     lost_timeout_threshold: 10.0  # 最长丢失时间限制，超过则取消跟踪
     reid_model_path: "/home/sunrise/Ebike_Human_Follower/src/yolov11_pose_tracking/models/osnet_64x128_nv12.bin"
     
-    # # BOTSORT跟踪器参数
-    # track_high_thresh: 0.25
-    # track_low_thresh: 0.1
-    # new_track_thresh: 0.25
-    # fuse_score: true
-    # gmc_method: "sparseOptFlow"
-    # proximity_thresh: 0.5
-    # appearance_thresh: 0.7
-    # with_reid: false

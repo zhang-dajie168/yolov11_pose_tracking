@@ -559,9 +559,10 @@ class Yolov11PoseNode(Node):
             self.get_logger().info(f"停止跟踪 ID: {track_id}")
         else:
             self.save_tracked_target(track_id, track['bbox'], cv_image, current_time)
+            
 
     def _handle_lost_targets(self, current_track_ids: set, tracks: List[Dict], 
-                        cv_image: np.ndarray, current_time: float):
+                            cv_image: np.ndarray, current_time: float):
         """处理丢失目标"""
         if self.current_tracking_id is not None and self.current_tracking_id not in current_track_ids:
             if self.current_tracking_id in self.tracked_targets:
@@ -570,12 +571,15 @@ class Yolov11PoseNode(Node):
                 if self.current_tracking_id in self.tracked_persons:
                     self.tracked_persons[self.current_tracking_id]['is_tracking'] = False
                 
+                # 确保丢失时间被正确设置
                 if self.target_lost_time is None:
                     self.target_lost_time = current_time
-                    self.get_logger().warning(f"目标 {self.current_tracking_id} 丢失，立即启动ReID找回")
+                    self.get_logger().warning(f"目标 {self.current_tracking_id} 丢失，立即启动ReID匹配找回")
                 
                 # 检查是否超时
                 time_since_lost = current_time - self.target_lost_time
+                # self.get_logger().info(f"目标 {self.current_tracking_id} 已丢失 {time_since_lost:.1f} 秒")
+                
                 if time_since_lost > self.lost_timeout_threshold:
                     self.get_logger().warning(
                         f"目标 {self.current_tracking_id} 丢失超过 {self.lost_timeout_threshold} 秒，停止跟踪并清除目标信息，需要重新举手选择跟踪目标"
@@ -617,14 +621,27 @@ class Yolov11PoseNode(Node):
                 )
                 
                 if verified_id is not None:
+                    # ReID验证成功，重置丢失时间
                     self.target_lost_time = None
                     self.get_logger().info(f"目标 {self.current_tracking_id}重新出现，ReID验证成功，继续跟踪")
                     
                     if verified_id in self.tracked_persons:
                         self.tracked_persons[verified_id]['is_tracking'] = True
                         self.tracked_persons[verified_id]['last_seen_time'] = current_time
-                self.get_logger().info(f"======================================================")
+                else:
+                    # ReID验证失败，但目标重新出现 - 关键修改：继续累积丢失时间
+                    time_since_lost = current_time - self.target_lost_time
 
+                    # 检查是否超时
+                    if time_since_lost > self.lost_timeout_threshold:
+                        self.get_logger().warning(
+                            f"目标 {self.current_tracking_id} ReID验证失败超过 {self.lost_timeout_threshold} 秒，停止跟踪并清除目标信息，需要重新举手选择跟踪目标"
+                        )
+                        self._clear_tracking_target()
+                        return
+                    
+                self.get_logger().info(f"======================================================")
+    
     # 添加新的清理方法
     def _clear_tracking_target(self):
         """清除当前跟踪目标的所有信息"""

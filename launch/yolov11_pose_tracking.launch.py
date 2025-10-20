@@ -24,8 +24,7 @@ def generate_launch_description():
             output='screen',
             # 添加重映射(如果需要)
             remappings=[
-                ('/camera/color/image_raw', '/camera/color/image_raw'),
-                ('/camera/depth/image_raw', '/camera/depth/image_raw')
+                ('/camera/color/image_raw', '/camera/color/image_raw')
             ]
         )
     ])
