@@ -1,23 +1,22 @@
 yolov11_pose_node:
   ros__parameters:
     # YOLO模型参数
-    model_path: "/home/sunrise/Ebike_Human_Follower/src/yolov11_pose_tracking/models/yolov8n_pose_bayese_640x640_nv12_modified.bin"
-    conf_threshold: 0.7
-    kpt_conf_threshold: 0.5
+    model_path: "/home/sunrise/Ebike_Human_Follower/src/yolov11_pose_tracking/models/yolov8s_pose_bayese_640x640_nv12_modified.bin"
+    conf_threshold: 0.3
+    kpt_conf_threshold: 0.3
 
     # 处理性能参数
-    max_processing_fps: 15
+    max_processing_fps: 15    
     
     # 举手检测参数
-    hands_up_confirm_frames: 3
+    hands_up_confirm_frames: 3     # 连续3帧举手开始跟踪目标
     
     # 跟踪保护参数
     tracking_protection_time: 5.0
     
     # ReID相关参数
-    reid_similarity_threshold: 0.73
-    height_change_threshold: 0.28  # 新增高度变化阈值
-    feature_update_interval: 1.0
+    reid_similarity_threshold: 0.73    # reid特征匹配阈值
+    height_change_threshold: 0.28  # 新增高度变化阈值 
     lost_timeout_threshold: 10.0  # 最长丢失时间限制，超过则取消跟踪
     reid_model_path: "/home/sunrise/Ebike_Human_Follower/src/yolov11_pose_tracking/models/osnet_64x128_nv12.bin"
     

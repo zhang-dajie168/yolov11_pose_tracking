@@ -59,10 +59,11 @@ class TrackedTarget:
         self.recovery_time = None
     
     def mark_recovered(self, timestamp: float):
-        """标记目标找回"""
+        """标记目标找回 - 取消冷却期，立即恢复正常更新"""
         self.is_recovered = True
         self.lost_frames = 0
-        self.recovery_time = timestamp
+        self.recovery_time = None  # 不再设置恢复时间
+        self.update_paused = False  # 立即结束暂停状态
     
     def switch_to_new_id(self, new_track_id: int):
         """切换到新的跟踪ID"""
@@ -101,10 +102,9 @@ class Yolov11PoseNode(Node):
         self.declare_parameter('tracking_protection_time', 5.0)
         self.declare_parameter('reid_similarity_threshold', 0.8)
         self.declare_parameter('height_change_threshold', 0.15)
-        self.declare_parameter('feature_update_interval', 1.0)
         self.declare_parameter('lost_timeout_threshold', 10.0)
         self.declare_parameter('reid_model_path', 'osnet_64x128_nv12.bin')
-
+        
     def _get_parameters(self):
         """获取参数值"""
         self.conf_threshold = self.get_parameter('conf_threshold').value
@@ -114,7 +114,6 @@ class Yolov11PoseNode(Node):
         self.tracking_protection_time = self.get_parameter('tracking_protection_time').value
         self.reid_similarity_threshold = self.get_parameter('reid_similarity_threshold').value
         self.height_change_threshold = self.get_parameter('height_change_threshold').value
-        self.feature_update_interval = self.get_parameter('feature_update_interval').value
         self.lost_timeout_threshold = self.get_parameter('lost_timeout_threshold').value
         # reid_model_path = self.get_parameter('reid_model_path').value
 
@@ -206,7 +205,6 @@ class Yolov11PoseNode(Node):
         self.get_logger().info(f"跟踪保护时间: {self.tracking_protection_time}s")
         self.get_logger().info(f"ReID相似度阈值: {self.reid_similarity_threshold}")
         self.get_logger().info(f"高度变化阈值: {self.height_change_threshold}")
-        self.get_logger().info(f"特征更新间隔: {self.feature_update_interval}s")
         self.get_logger().info(f"丢失超时阈值: {self.lost_timeout_threshold}s")
         self.get_logger().info("=========================")
 
@@ -237,9 +235,11 @@ class Yolov11PoseNode(Node):
             self.get_logger().warn(f"Feature extraction failed: {e}")
             return np.zeros(512, dtype=np.float32)
         
+        
     def save_tracked_target(self, track_id: int, bbox: List[float], image: np.ndarray, timestamp: float):
-        """保存跟踪目标信息 - 优化内存分配"""
+        """保存跟踪目标信息 - 每帧更新所有特征信息"""
         if track_id not in self.tracked_targets:
+            # 新目标：提取特征
             feature = self.extract_feature_from_bbox(image, bbox)
             height_pixels = bbox[3] - bbox[1]
             self.tracked_targets[track_id] = TrackedTarget(track_id, bbox, feature, height_pixels, timestamp)
@@ -247,21 +247,7 @@ class Yolov11PoseNode(Node):
         
         target = self.tracked_targets[track_id]
         
-        # 检查是否处于找回后的冷却期
-        if target.recovery_time is not None:
-            time_since_recovery = timestamp - target.recovery_time
-            if time_since_recovery < 1.0:
-                target.bbox = bbox
-                target.height_pixels = bbox[3] - bbox[1]
-                target.last_seen_time = timestamp
-                target.lost_frames = 0
-                target.update_paused = True
-                return
-            else:
-                target.update_paused = False
-                target.recovery_time = None
-        
-        # 如果更新被暂停，跳过特征更新
+        # 如果更新被暂停（仅用于其他暂停情况），跳过特征更新
         if target.update_paused:
             target.bbox = bbox
             target.height_pixels = bbox[3] - bbox[1]
@@ -269,17 +255,7 @@ class Yolov11PoseNode(Node):
             target.lost_frames = 0
             return
         
-        # 正常更新频率控制
-        time_since_update = timestamp - target.last_update_time
-        if time_since_update < self.feature_update_interval:
-            target.bbox = bbox
-            target.height_pixels = bbox[3] - bbox[1]
-            target.last_seen_time = timestamp
-            target.lost_frames = 0
-            target.is_recovered = False
-            return
-        
-        # 完整更新（包括特征）
+        # 每帧都更新特征（高精度模式）
         feature = self.extract_feature_from_bbox(image, bbox)
         height_pixels = bbox[3] - bbox[1]
         target.update(bbox, feature, height_pixels, timestamp)
@@ -359,6 +335,12 @@ class Yolov11PoseNode(Node):
             
             target_bbox = next(t['bbox'] for t in candidate_tracks if t['track_id'] == best_match_id)
             target.mark_recovered(timestamp)
+            
+            # 重要修改：找回后立即结束暂停状态，恢复正常特征更新
+            target.update_paused = False
+            target.recovery_time = None
+            
+            # 立即保存目标信息（每帧更新特征）
             self.save_tracked_target(self.current_tracking_id, target_bbox, image, timestamp)
             
             recovered_id = best_match_id
@@ -368,6 +350,9 @@ class Yolov11PoseNode(Node):
                     self.tracked_targets[best_match_id].switch_to_new_id(best_match_id)
                     self.tracked_targets[best_match_id].original_track_id = self.current_tracking_id
                     self.tracked_targets[best_match_id].mark_recovered(timestamp)
+                    # 同样结束新目标的暂停状态
+                    self.tracked_targets[best_match_id].update_paused = False
+                    self.tracked_targets[best_match_id].recovery_time = None
             
             self.target_lost_time = None
             
@@ -411,6 +396,10 @@ class Yolov11PoseNode(Node):
                 self.get_logger().info(f"ReID验证成功: ID {track_id}, 相似度: {similarity:.3f}, 高度变化: {height_change:.3f}")
                 
                 target.mark_recovered(timestamp)
+                # 重要修改：验证成功后立即结束暂停状态
+                target.update_paused = False
+                target.recovery_time = None
+                
                 self.save_tracked_target(target.track_id, bbox, image, timestamp)
                 self.target_lost_time = None
                 
@@ -438,6 +427,8 @@ class Yolov11PoseNode(Node):
         self.last_process_time = current_time
 
         try:
+            #开始计时
+            # frame_start_time=time.time()
             # 图像转换
             cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
             
@@ -447,6 +438,7 @@ class Yolov11PoseNode(Node):
             
             # 后处理
             ids, scores, bboxes, kpts_xy, kpts_score = self.model.postProcess(outputs)
+            # self.get_logger().info(f'boxs:,{len(bboxes)}')
 
             # 准备检测结果用于跟踪
             detections = []
@@ -487,7 +479,19 @@ class Yolov11PoseNode(Node):
 
             # 可视化并发布结果
             self._publish_results(cv_image, tracks, msg.header)
-             
+            
+            # # # 计算并打印处理时间
+            # frame_end_time = time.time()
+            # processing_time = (frame_end_time - frame_start_time) * 1000  # 转换为毫秒
+            # fps = 1000.0 / processing_time if processing_time > 0 else 0
+            
+            # self.get_logger().info(
+            #     f"帧处理时间: {processing_time:.2f}ms | "
+            #     f"实时FPS: {fps:.1f} | "
+            #     f"检测人数: {len(tracks)} | "
+            #     f"跟踪ID: {self.current_tracking_id if self.current_tracking_id else 'None'}"
+            # )
+                   
 
         except Exception as e:
             self.get_logger().error(f"Image processing error: {str(e)}")
@@ -726,6 +730,7 @@ class Yolov11PoseNode(Node):
                             abs(right_wrist[0] - right_shoulder[0]) < 80)
 
         return left_hand_up or right_hand_up
+        
         
     def _publish_results(self, image: np.ndarray, tracks: List[Dict], header):
         """发布结果 - 合并可视化"""
